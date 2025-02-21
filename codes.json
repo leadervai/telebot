@@ -1,0 +1,59 @@
+{
+    "codes": [
+        {
+            "amount": 80,
+            "codes": [
+                {
+                    "code": "BDMB-K-S-00982283",
+                    "redeemed": false
+                },
+                {
+                    "code": "1963-1773-2113-7118",
+                    "redeemed": false
+                },
+                {
+                    "code": "BDMB-L-S-00422493",
+                    "redeemed": false
+                },
+                {
+                    "code": "4516-7279-2257-5235",
+                    "redeemed": false
+                },
+                {
+                    "code": "BDMB-Q-S-04745568",
+                    "redeemed": false
+                },
+                {
+                    "code": "3356-2234-7673-4530",
+                    "redeemed": false
+                }
+            ],
+            "price": 74.0
+        },
+        {
+            "amount": 160,
+            "codes": [],
+            "price": 150.0
+        },
+        {
+            "amount": 20,
+            "codes": [],
+            "price": 20.0
+        },
+        {
+            "amount": 36,
+            "codes": [],
+            "price": 36.0
+        },
+        {
+            "amount": 405,
+            "codes": [],
+            "price": 400.0
+        },
+        {
+            "amount": 7,
+            "codes": [],
+            "price": 7.0
+        }
+    ]
+}

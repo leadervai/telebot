@@ -1,0 +1,26 @@
+{
+    "codes": [
+        {
+            "amount": 80,
+            "codes": [
+                {
+                    "code": "BDMB-K-S-00982283",
+                    "redeemed": true
+                },
+                {
+                    "code": "1963-1773-2113-7118",
+                    "redeemed": true
+                },
+                {
+                    "code": "BDMB-L-S-00422493",
+                    "redeemed": true
+                },
+                {
+                    "code": "4516-7279-2257-5235",
+                    "redeemed": true
+                }
+            ],
+            "price": 74.0
+        }
+    ]
+}
