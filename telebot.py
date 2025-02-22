@@ -1,24 +1,23 @@
-from dotenv import load_dotenv
+from telethon import TelegramClient, events
 import os
-
-# Load environment variables from .env file
-load_dotenv()
-
-# Get the Telegram bot token from environment variables
-token = os.getenv("TELEGRAM_TOKEN")
-
-# Initialize your bot with the token
-from telegram import Bot
-
-bot = Bot(token=token)
-
-# Your existing bot code...
-
-from telegram import Update
-from telegram.ext import Application, MessageHandler, filters, ContextTypes, ConversationHandler, CommandHandler
+from dotenv import load_dotenv
 import json
 import logging
 import re
+
+# Load environment variables
+load_dotenv()
+
+# Get API credentials (Create an app on my.telegram.org to get these)
+API_ID = os.getenv("TELEGRAM_API_ID")
+API_HASH = os.getenv("TELEGRAM_API_HASH")
+
+# Check if API_ID and API_HASH are loaded correctly
+if not API_ID or not API_HASH:
+    raise ValueError("Your API ID or Hash cannot be empty or None. Please check your .env file.")
+
+# Create a Telegram client for your personal account
+client = TelegramClient("my_account", API_ID, API_HASH)
 
 # Logging setup
 logging.basicConfig(level=logging.INFO)
@@ -30,9 +29,6 @@ PREFIX = "J"  # Can be changed as needed
 FILE_NAME = 'codes.json'
 REMOVED_FILE_NAME = 'used.json'
 TOTAL_DUE_FILE = 'total_due.json'
-
-# States for the conversation
-ASKING_FOR_CODES = range(1)
 
 # ✅ Helper functions
 def load_json(file_name, default_data=None):
@@ -60,23 +56,22 @@ def parse_command(message):
         return command, args
     return None, []
 
-import re
-
 def escape_markdown_v2(text):
-    escape_chars = r'_*\[\]()~`>#+-=|{}.!'
+    escape_chars = r'_*\[\]()~`>#+-=|{}!.'
     return re.sub(f"([{re.escape(escape_chars)}])", r"\\\1", text)
 
 # ✅ Telegram Command Handlers
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+@client.on(events.NewMessage(incoming=True))
+async def handle_message(event):
     """ Handles prefixed commands """
-    message = update.message.text.strip()
+    message = event.message.message.strip()
     command, args = parse_command(message)
 
     if not command:
         return
 
     if command == "start":
-        await update.message.reply_text("Hello! I'm your UC bot. Use Jhelp to see available commands.")
+        await event.respond("Hello! I'm your UC bot. Use Jhelp to see available commands.")
     elif command == "help":
         help_text = """Available commands:
 Jstart - Start the bot
@@ -88,31 +83,31 @@ Jcheck - Check removed codes
 Jrate - Show UC prices
 Jclear - Clear all used codes and reset dues
 Jup <amount> <code1> [<code2> ...] - Upload new codes
-Jload <amount> - Load new codes for a specific amount"""
-        await update.message.reply_text(help_text)
+Jstop - Stop the bot"""
+        await event.respond(help_text)
     elif command == "rate":
-        await rate(update, context)
+        await rate(event)
     elif command == "baki":
-        await baki(update, context, args)
+        await baki(event, args)
     elif command == "price":
-        await price(update, context, args)
+        await price(event, args)
     elif command == "stock":
-        await stock(update, context)
+        await stock(event)
     elif command == "check":
-        await check(update, context)
+        await check(event)
     elif command == "clear":
-        await clear(update, context)
+        await clear(event)
     elif command == "up":
-        await upload_codes(update, context, args)
-    elif command == "load":
-        await load_codes_command(update, context, args)
+        await upload_codes(event, args)
+    elif command == "stop":
+        await stop_bot(event)
     else:
-        await update.message.reply_text(f"Unknown command: {command}")
+        await event.respond(f"Unknown command: {command}")
 
-async def rate(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def rate(event):
     data = load_json(FILE_NAME)
     if not data['codes']:
-        await update.message.reply_text("No pricing data available.")
+        await event.respond("No pricing data available.")
         return
 
     sorted_codes = sorted(data['codes'], key=lambda group: group['amount'])
@@ -124,9 +119,8 @@ async def rate(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if price is not None:
             result.append(f"☞︎︎︎ {amount:<3} 🆄︎🅲︎  ➪ {price} \n")
 
-    await update.message.reply_text("\n".join(result) if len(result) > 1 else "No pricing data available.")
+    await event.respond("\n".join(result) if len(result) > 1 else "No pricing data available.")
 
-# ✅ FIXED: Move this function OUTSIDE of `rate`
 def get_codes(amount, count):
     """Retrieve a specified number of unused codes for the given amount."""
     data = load_json(FILE_NAME)
@@ -168,40 +162,57 @@ def get_codes(amount, count):
 
     return amount, [code['code'] for code in selected_codes]
 
-async def baki(update: Update, context: ContextTypes.DEFAULT_TYPE, args):
+async def baki(event, args):
     """Retrieve UC codes and move them to used.json"""
     if len(args) < 1:
-        await update.message.reply_text("Usage: Jbaki <amount> [count]\nExample: Jbaki 36 or Jbaki 36 2")
+        await event.respond("Usage: Jbaki <amount> [count]\nExample: Jbaki 36 or Jbaki 36 2")
         return
 
     try:
         amount = int(args[0])
         count = int(args[1]) if len(args) > 1 else 1  # Default to 1 if count is not provided
     except ValueError:
-        await update.message.reply_text("Invalid amount or count.")
+        await event.respond("Invalid amount or count.")
         return
 
     result = get_codes(amount, count)
 
     if result:
         amount, codes = result
-        codes_output = '\n'.join(codes)
-        codes_output = escape_markdown_v2(codes_output)  # Escape special characters
-        await update.message.reply_text(f"\n{codes_output}", parse_mode="MarkdownV2")
-    else:
-        await update.message.reply_text(f"⚠ {amount} UC Stock Out ⚠")
+        codes_output = '\n'.join([f"`{code}`" for code in codes])  # Format each code in monospace
 
-async def price(update: Update, context: ContextTypes.DEFAULT_TYPE, args):
+        # Get the price for the given amount from the codes.json file
+        data = load_json(FILE_NAME)
+        group = next((item for item in data['codes'] if item['amount'] == amount), None)
+        if group:
+            price_per_code = group.get('price', 0)
+        else:
+            price_per_code = 0
+
+        total_due = price_per_code * count
+
+        # Update total due in total_due.json
+        total_due_data = load_json(TOTAL_DUE_FILE, {"total_due": 0})
+        previous_due = total_due_data["total_due"]
+        total_due_data["total_due"] += total_due
+        save_json(total_due_data, TOTAL_DUE_FILE)
+
+        response = f"{codes_output}\n\n✓ {amount} 🆄︎🅲︎  x  {count}  ✓\n\nTᴏᴛᴀʟ Dᴜᴇ : ({previous_due}) + ({price_per_code}x{count}) = {total_due_data['total_due']}"
+        await event.respond(response)
+    else:
+        await event.respond(f"⚠ {amount} UC Stock Out ⚠")
+
+async def price(event, args):
     """Update the price for a specific UC amount in both codes.json and used.json."""
     if len(args) < 2:
-        await update.message.reply_text("Usage: Jprice <amount> <price>")
+        await event.respond("Usage: Jprice <amount> <price>")
         return
 
     try:
         amount = int(args[0])
         price = float(args[1])
     except ValueError:
-        await update.message.reply_text("Invalid amount or price.")
+        await event.respond("Invalid amount or price.")
         return
 
     # Load both JSON files
@@ -222,12 +233,12 @@ async def price(update: Update, context: ContextTypes.DEFAULT_TYPE, args):
     save_json(data, FILE_NAME)
     save_json(used_data, REMOVED_FILE_NAME)
 
-    await update.message.reply_text(f"✅ Price for {amount} UC updated to {price} in both stock & used records.")
+    await event.respond(f"✅ Price for {amount} UC updated to {price} in both stock & used records.")
 
-async def stock(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def stock(event):
     data = load_json(FILE_NAME)
     if not data['codes']:
-        await update.message.reply_text("No codes available.")
+        await event.respond("No codes available.")
         return
 
     total_price = 0  # Store the total price of available stock
@@ -245,12 +256,12 @@ async def stock(update: Update, context: ContextTypes.DEFAULT_TYPE):
     result.append("\n▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔")
     result.append(f"Wᴏʀᴛʜ Oғ : {total_price} ")
 
-    await update.message.reply_text("\n".join(result))
+    await event.respond("\n".join(result))
 
-async def check(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def check(event):
     data = load_json(REMOVED_FILE_NAME)
     if not data['codes']:
-        await update.message.reply_text("No dues available, All clear ✅✅✅.")
+        await event.respond("No dues available, All clear ✅✅✅.")
         return
 
     total_used_price = 0  # Store the total price of used codes
@@ -268,14 +279,15 @@ async def check(update: Update, context: ContextTypes.DEFAULT_TYPE):
     result.append("\n▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔")
     result.append(f"☞︎︎︎ Tᴏᴛᴀʟ Dᴜᴇ ➪ {total_used_price}")
 
-    await update.message.reply_text("\n".join(result))
+    await event.respond("\n".join(result))
 
-async def clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def clear(event):
     save_json({"codes": []}, REMOVED_FILE_NAME)
-    await update.message.reply_text("Cleared all dues ✅ ✅.")
+    save_json({"total_due": 0}, TOTAL_DUE_FILE)
+    await event.respond("Cleared all dues ✅ ✅.")
 
 # Add codes grouped by amount
-async def add_codes(update, amount, codes, file_name=FILE_NAME):
+async def add_codes(event, amount, codes, file_name=FILE_NAME):
     data = load_json(file_name, {"codes": []})
 
     group = next((item for item in data['codes'] if item['amount'] == amount), None)
@@ -293,7 +305,7 @@ async def add_codes(update, amount, codes, file_name=FILE_NAME):
         else:
             warning_message = f"Duplicate code detected: ```{code.strip()}```"
             logging.warning(warning_message)
-            await update.message.reply_text(warning_message)
+            await event.respond(warning_message)
 
     group['codes'].extend(new_codes)
 
@@ -301,14 +313,14 @@ async def add_codes(update, amount, codes, file_name=FILE_NAME):
 
     log_message = f"Added {len(new_codes)} codes for amount: {amount}"
     logging.info(log_message)
-    await update.message.reply_text(log_message)
+    await event.respond(log_message)
 
 # Function to process the upload command
-async def process_upload_command(update, command):
+async def process_upload_command(event, command):
     parts = command.split(' ', 2)
     if len(parts) < 3:
         logging.error("Invalid command format. Use: .up <amount>uc <codes>")
-        await update.message.reply_text("Invalid command format. Use: .up <amount>uc <codes>")
+        await event.respond("Invalid command format. Use: .up <amount>uc <codes>")
         return
 
     amount_code, codes = parts[1], parts[2]
@@ -316,7 +328,7 @@ async def process_upload_command(update, command):
         amount = int(amount_code[:-2])
     except ValueError:
         logging.error("Invalid amount format. Please provide a valid number before 'uc'.")
-        await update.message.reply_text("Invalid amount format. Please provide a valid number before 'uc'.")
+        await event.respond("Invalid amount format. Please provide a valid number before 'uc'.")
         return
 
     # Handle multi-line input by replacing newlines with spaces
@@ -328,19 +340,19 @@ async def process_upload_command(update, command):
 
     if not clean_codes:
         logging.error("No valid codes found.")
-        await update.message.reply_text("No valid codes found.")
+        await event.respond("No valid codes found.")
         return
 
     # Limit to 10 codes at a time
     clean_codes = clean_codes[:10]
 
-    await add_codes(update, amount, clean_codes)
+    await add_codes(event, amount, clean_codes)
 
 # Update the upload_codes command handler
-async def upload_codes(update: Update, context: ContextTypes.DEFAULT_TYPE, args):
+async def upload_codes(event, args):
     """Upload new codes to the codes.json file."""
     if len(args) < 2:
-        await update.message.reply_text("Usage: Jup <amount> <code1> [<code2> ...]\nExample: Jup 80 BDMB-K-S-00982283 1963-1773-2113-7118 BDMB-L-S-00422493 4516-7279-2257-5235")
+        await event.respond("Usage: Jup <amount> <code1> [<code2> ...]\nExample: Jup 80 UPBD-N-S-04811675 1679-5939-2679-5224 UPBD-N-S-04810010 4491-9257-2419-2723")
         return
 
     amount = args[0]
@@ -349,73 +361,26 @@ async def upload_codes(update: Update, context: ContextTypes.DEFAULT_TYPE, args)
     try:
         amount = int(amount)
     except ValueError:
-        await update.message.reply_text("Invalid amount format. Please provide a valid number.")
+        await event.respond("Invalid amount format. Please provide a valid number.")
         return
 
-    await add_codes(update, amount, codes)
-
-# New command handler for jload
-async def load_codes_command(update: Update, context: ContextTypes.DEFAULT_TYPE, args):
-    """Initiate the process to load new codes for a specific amount."""
-    if len(args) < 1:
-        await update.message.reply_text("Usage: Jload <amount>")
-        return
-
-    try:
-        amount = int(args[0])
-    except ValueError:
-        await update.message.reply_text("Invalid amount format. Please provide a valid number.")
-        return
-
-    context.user_data['amount'] = amount
-    await update.message.reply_text(f"Upload codes for {amount} UC:")
-    return ASKING_FOR_CODES
-
-# Handler to receive the codes
-async def receive_codes(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    amount = context.user_data.get('amount')
-    if not amount:
-        await update.message.reply_text("No amount specified. Please use the Jload command first.")
-        return ConversationHandler.END
-
-    codes = update.message.text.strip()
-
-    # Extract each code using a flexible pattern
-    pattern = r'[a-zA-Z]{4}-[a-zA-Z]-S-\d{8} \d{4}-\d{4}-\d{4}-\d{4}'
-    clean_codes = re.findall(pattern, codes)
-
-    if not clean_codes:
-        logging.error("No valid codes found.")
-        await update.message.reply_text("No valid codes found.")
-        return ConversationHandler.END
+    # Combine adjacent code parts into single codes
+    combined_codes = []
+    for i in range(0, len(codes), 2):
+        combined_code = f"{codes[i]} {codes[i+1]}"
+        combined_codes.append(combined_code)
 
     # Limit to 10 codes at a time
-    clean_codes = clean_codes[:10]
+    combined_codes = combined_codes[:10]
 
-    await add_codes(update, amount, clean_codes)
-    return ConversationHandler.END
+    await add_codes(event, amount, combined_codes)
 
-
+async def stop_bot(event):
+    """Stop the bot gracefully."""
+    await event.respond("Stopping the bot...")
+    await client.disconnect()
 
 # ✅ Main function to start the bot
-def main():
-    app = Application.builder().token(token).build()  # Use the `token` variable
-
-    # Conversation handler for jload command
-    conv_handler = ConversationHandler(
-        entry_points=[CommandHandler('jload', load_codes_command)],
-        states={
-            ASKING_FOR_CODES: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_codes)],
-        },
-        fallbacks=[],
-    )
-
-    # Handle all messages that start with "J" or "j"
-    app.add_handler(conv_handler)
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(rf"^[Jj]\w*"), handle_message))
-
-    print("Bot is running...")
-    app.run_polling()
-
-if __name__ == "__main__":
-    main()
+print("Bot is running...")
+client.start()
+client.run_until_disconnected()
